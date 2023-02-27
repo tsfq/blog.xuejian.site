@@ -1,0 +1,935 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+    <id>https://blog.xuejian.site</id>
+    <title>随笔</title>
+    <updated>2023-02-27T03:32:05.115Z</updated>
+    <generator>https://github.com/jpmonette/feed</generator>
+    <link rel="alternate" href="https://blog.xuejian.site"/>
+    <link rel="self" href="https://blog.xuejian.site/atom.xml"/>
+    <subtitle>记录一下</subtitle>
+    <logo>https://blog.xuejian.site/images/avatar.png</logo>
+    <icon>https://blog.xuejian.site/favicon.ico</icon>
+    <rights>All rights reserved 2023, 随笔</rights>
+    <entry>
+        <title type="html"><![CDATA[监控视频异地组网]]></title>
+        <id>https://blog.xuejian.site/post/jian-kong-shi-pin-yi-di-zu-wang/</id>
+        <link href="https://blog.xuejian.site/post/jian-kong-shi-pin-yi-di-zu-wang/">
+        </link>
+        <updated>2023-02-27T03:24:58.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=4>背景：目前很多视频监控都分布在各地，相互之间无法通过内网进行互联，但现实工作中，需要在监控室等场所进行远程统一监控管理。同时，由于历史原因，存在各种品牌的监控摄像头，以及各种运营商网络，并且网络几乎没有公网IP。</p>
+<p><font size=4>实现条件：1、摄像头所在网络必须连通公网；2、摄像头端安装相关远程联网设备；3、监控组网服务端必须具备公网IP，或者具备公网IP中转通道；</p>
+<p><strong><font size=4>部署流程：</strong></p>
+<p><font size=4>1、在x86设备上，建立监控室的frps连接。该步骤是为了保证监控视频通过公网加密传输至监控室内网，并且仅限于监控室内网播放，防止安全问题。frps配置如下：</p>
+<pre><code class="language-shell">[common]
+bind_port = 2000
+dashboard_port = 2001
+token = 123456
+dashboard_user = test
+dashboard_pwd = 123456
+log_level = info
+log_file=/frp/frps.log
+</code></pre>
+<p><font size=4>2、（可选）如果监控室有固定公网IP，则不需要进行该步骤。如果监控室没有固定公网IP，则使用x86上的frpc将本地的frps的相关端口暴露到公网上，以保证相关端口可以被摄像头端相关设备访问；</p>
+<pre><code class="language-shell">[common]
+server_addr = 1.1.1.1
+server_port = 7000
+token = 123456
+
+[jkfrps]
+type = tcp
+local_ip = 127.0.0.1
+local_port = 2000
+remote_port = 2000
+use_compression = true
+use_encryption = true
+</code></pre>
+<p><font size=4>3、将需要的监控端口暴露至监控室内网端口。本次以海康威视的服务端口8000为例：</p>
+<pre><code class="language-shell">[common]
+server_addr = 1.1.1.1
+server_port = 2000
+token = 123456
+
+[cssp1]
+type = tcp
+local_ip = 192.168.1.2
+local_port = 8000
+remote_port = 55001
+use_compression = true
+use_encryption = true
+</code></pre>
+<p><font size=4>4、在监控程序上，将相关IP及端口加入监控。</p>
+<p><strong><font size=4>进阶操作：</strong></p>
+<p><font size=4>1、如果监控室也没有固定公网IP，需要其他地方进行中转的情况下，为了最大程序利用带宽，可以尝试使用frp的xtcp模式进行直连处理，中转端frps仅用于验证，并不中转流量。该原理下，需要在监控室与摄像头端设备上均启动相关frpc进程；</p>
+<pre><code class="language-shell">//frps启动一个UDP监听端口
+[common]
+bind_port = 7000
+bind_udp_port = 7000
+</code></pre>
+<pre><code class="language-shell">//摄像头端启动对应的frpc
+[common]
+server_addr = 1.1.1.1
+server_port = 7000
+
+[scssp1-p2p]
+type = xtcp
+# 只有 sk 一致的用户才能访问到此服务
+sk = 123456
+local_ip = 192.168.1.2
+local_port = 8000
+</code></pre>
+<pre><code class="language-shell">//监控室端启动对应的frpc
+[common]
+server_addr = 1.1.1.1
+server_port = 7000
+
+[cssp1_sp2p_visitor]
+type = xtcp
+# xtcp 的访问者
+role = visitor
+# 要访问的 xtcp 代理的名字
+server_name = p2p_ssh
+sk = 123456
+# 绑定内网口用于访问视频服务
+bind_addr = 172.100.100.2
+bind_port = 45001
+</code></pre>
+<p><font size=4>2、如果xtcp无法起作用，为了保证安全，建议使用stcp模式进行对接，这样保证只有本地的监控集中展示系统可以访问。</p>
+<pre><code class="language-shell">//摄像头端启动对应的frpc
+[common]
+server_addr = 1.1.1.1
+server_port = 7000
+
+[scssp1-stcp]
+type = stcp
+# 只有 sk 一致的用户才能访问到此服务
+sk = 123456
+local_ip = 192.168.1.2
+local_port = 8000
+</code></pre>
+<pre><code class="language-shell">//监控室端启动对应的frpc
+[common]
+server_addr = 1.1.1.1
+server_port = 7000
+
+[scssp1-stcp_visitor]
+type = stcp
+# stcp 的访问者
+role = visitor
+# 要访问的 stcp 代理的名字
+server_name = scssp1-stcp
+sk = 123456
+# 绑定内网口用于访问视频服务
+bind_addr = 172.100.100.2
+bind_port = 45001
+</code></pre>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[CDN回源Host妙用]]></title>
+        <id>https://blog.xuejian.site/post/cdn-hui-yuan-host-miao-yong/</id>
+        <link href="https://blog.xuejian.site/post/cdn-hui-yuan-host-miao-yong/">
+        </link>
+        <updated>2023-02-02T07:44:39.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=3>背景：由于部分IDC进行备案接入时，要求域名所有者和租赁机位（机柜）的为同一个实体，造成如果是不同实体的域名无法在该IDC使用。</p>
+<p><font size=3>所需条件：（1）投入使用的域名必须在国内进行了域名备案，为方便描述，该域名下称xuejan.site；（2）有一个在该接入商做了备案的域名，为方便描述，该域名下称bbb.com；</p>
+<p><font size=3>业务场景：由于业务需要，需要在新实体新增一个服务，服务域名为sso.xuejan.site；为了降低成本，该服务复用了原有的IDC资源；</p>
+<p><strong><font size=4>IDC相关的配置</strong></p>
+<p><font size=3>IDC上需要做如下配置：（1）部署新服务所需的前后端服务；（2）在nginx上做好相关的服务监听，监听域名为aaasso.bbb.com;</p>
+<p><strong><font size=4>CDN上的配置</strong></p>
+<p><font size=3>CDN上的以国内用的比较多的三家公有云的CDN为例进行描写，三家分别为阿里云、腾讯云、华为云。需要注意的是，不要使用三家的全站加速服务，不然会有其他如访问次数等费用产生。三家CDN都是在完成初步的CDN域名增加后，针对需要更改的地方进行描述。</p>
+<p><strong><font size=3>阿里云CDN</strong></p>
+<p><font size=3>1、点击域名列表中，完成添加后的加速域名管理，按照图示步骤进入相关回源host的设置：</p>
+<figure data-type="image" tabindex="1"><img src="https://s3.xuejian.site/2022/10/20221006001147.png" alt="" loading="lazy"></figure>
+<p><font size=3>2、在弹出的对话框中，打开红框标注1的“回源Host”选项，然后选择红框2标注的自定义域名，并在输入框中输入IDC本地nginx监听的server_name;</p>
+<figure data-type="image" tabindex="2"><img src="https://s3.xuejian.site/2022/10/20221006001422.png" alt="" loading="lazy"></figure>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[回首2022]]></title>
+        <id>https://blog.xuejian.site/post/hui-shou-2022/</id>
+        <link href="https://blog.xuejian.site/post/hui-shou-2022/">
+        </link>
+        <updated>2023-01-31T10:33:13.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=4>2022年已经悄然溜走，过去的一年，工作的变动，疫情的变化，都给貌似平常的一年，赋予了奇特的色彩。照片，虽不能完全反馈，却也能在点滴角落，记录着过去的一年。</p>
+<p><font size=4>年初的初雪，随搞得天寒地冻，却也有一番景色。<br>
+<img src="https://s3.xuejian.site/2023/01/d100d01eae1191668b4e3bd91feb84e.jpg" alt="" loading="lazy"></p>
+<p><font size=4>初春的周末，难得天气晴好，钱王祠中，西子湖畔，落日夕阳。<br>
+<img src="https://s3.xuejian.site/2023/01/a48e60aead8f893ab7bb7a8758833e4.jpg" alt="" loading="lazy"><br>
+<img src="https://s3.xuejian.site/2023/01/5cb14114ebb01c5ce9363e570ea8765.jpg" alt="" loading="lazy"><br>
+<img src="https://s3.xuejian.site/2023/01/b99e9a6d8e5313576c0647dfc99c7ab.jpg" alt="" loading="lazy"><br>
+<img src="https://s3.xuejian.site/2023/01/0e2cd40d1ef34bb6cd854403ed00443.jpg" alt="" loading="lazy"><br>
+<img src="https://s3.xuejian.site/2023/01/872f6a9968ca2c31e690e7825aade9c.jpg" alt="" loading="lazy"></p>
+<p><font size=4>晚归乘坐的末班地铁，仿佛是我的专车，哈哈。<br>
+<img src="https://s3.xuejian.site/2023/01/746743b2706e595a752c0113af26a34.jpg" alt="" loading="lazy"></p>
+<p><font size=4>年后的第一次出差前，在雨夜做了核酸。<br>
+<img src="https://s3.xuejian.site/2023/01/5ba8e8eb4626f5616370013fb209ce1.jpg" alt="" loading="lazy"></p>
+<p><font size=4>6月，出差回杭州路上，恰逢夕阳。<br>
+<img src="https://s3.xuejian.site/2023/01/90a213134aeb0dd2e7ed15d06e2b884.jpg" alt="" loading="lazy"><br>
+<img src="https://s3.xuejian.site/2023/01/b9099828eba31505066531de2fc8a4b.jpg" alt="" loading="lazy"><br>
+<img src="https://s3.xuejian.site/2023/01/18c7d4aa02c24f8d2ed1b9e5444576a.jpg" alt="" loading="lazy"><br>
+<img src="https://s3.xuejian.site/2023/01/3b3bc95d5e40de5d829175bf204ac67.jpg" alt="" loading="lazy"></p>
+<p><font size=4>夏天，下班后，抬头看到的晚霞。<br>
+<img src="https://s3.xuejian.site/2023/01/cf3ad3df02fd851d3692ed3a4d673c4.jpg" alt="" loading="lazy"></p>
+<p><font size=4>秋日，岳王庙的桂花。<br>
+<img src="https://s3.xuejian.site/2023/01/c817294149dd8c719aca402780b8b6a.jpg" alt="" loading="lazy"></p>
+<p><font size=4>层次感的嘉里中心，以及朋友聚会的烤鱼。<br>
+<img src="https://s3.xuejian.site/2023/01/9fb1b6ccadefac1b1378bdbf8f5454b.jpg" alt="" loading="lazy"><br>
+<img src="https://s3.xuejian.site/2023/01/07aadc27f80082f1e41cb6ae948c474.jpg" alt="" loading="lazy"></p>
+<p><font size=4>11月最后一天，杭州突然降下了今冬第一场初雪。<br>
+<img src="https://s3.xuejian.site/2023/01/389e6465a594caba002cef1c4bb16df.jpg" alt="" loading="lazy"></p>
+<p><font size=4>2022年已经落幕，愿2023年有更好更新的发展。</p>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[自建RSS请求地址池]]></title>
+        <id>https://blog.xuejian.site/post/zi-jian-rss-qing-qiu-di-zhi-chi/</id>
+        <link href="https://blog.xuejian.site/post/zi-jian-rss-qing-qiu-di-zhi-chi/">
+        </link>
+        <updated>2022-07-21T04:47:47.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=4>背景：目前很多服务针对单IP在单个时间段内的访问做了限制，但RSS服务需要定时访问这些服务，为了突破限制，需要将这些请求从多个IP进行分流。目前我使用的RSS转换服务为RSSHUB（地址：<a href="https://docs.rsshub.app/">https://docs.rsshub.app/</a>） ，RSS服务为自建Tiny Tiny RSS。</p>
+<p><font size=4>使用frp进行IP分流，需要在目标服务器上创建frps，为不泄露相关信息，本文中，云主机公网IP设定为11.11.11.11，token、端口和dashboard相关信息都是随机填写，请按照自己的需求进行更改；如果是搭建在阿里云、腾讯云、aws、azure等云大厂的云服务器上，请注意安全组放开相关端口。需要注意的是，服务器的80和443必须提供给frps，不然会导致搭建失败。frps.ini配置如下：</p>
+<pre><code class="language-shell">//frps.ini
+[common]
+bind_port = 7000
+dashboard_port = 7500
+dashboard_user = admin
+dashboard_pwd = admin
+token = 123456
+</code></pre>
+<p><font size=4>承载frpc的设备根据负载来，如果仅仅是单纯提IP分流的frpc使用，可以使用以前矿灾淘汰的的硬路由或可以刷Linux的机顶盒、开发板，如斐讯N1、小娱、树莓派等，提供相关服务的同时，最大程度降低电费消耗（一个月几块钱的电费，哈哈哈哈哈）。</p>
+<p><font size=4>完成后续操作后，请在RSS相关服务器上填入hosts或者docker上添加Host字段来达到分流的目的。</p>
+<p><strong><font size=5>一、HTTP链接</strong></p>
+<p><font size=4>针对源站为HTTP链接的，可以使用frp提供的HTTP负载均衡方案即可。为减少对frps所在云服务器的资源消耗，本文不开启健康检查，如果frps所在的云服务器性能较为强劲的，可以考虑开启健康检查，具体操作详见frp的相关章节：<a href="https://gofrp.org/docs/features/common/load-balancer/" title="负载均衡与健康检查">负载均衡与健康检查</a> ，本文给给出实现功能的最简配置，以要访问http://www.aaa.com 为例：</p>
+<pre><code class="language-shell">//frpc.ini
+[common]
+server_addr = 11.11.11.11
+server_port = 7000
+token = 123456
+
+[aaadl-1]
+type = http
+local_ip = www.aaa.com  //填入想要代理的域名
+local_port = 80
+custom_domains = www.aaa.com    //填入想要代理的域名
+group = aaadl        //每个地址需要不一样
+group_key = aaadl
+use_encryption = true
+use_compression = true
+</code></pre>
+<p><strong><font size=5>二、HTTPS链接</strong></p>
+<p><font size=4>针对源站为HTTPS链接的，frp本身暂不支持负载均衡模式进行代理，但在目前的趋势下，HTTPS因为SSL证书加密的可靠性，使得越来越多的目标站点使用了HTTPS。针对这个情况，参照各类方案后，最后选择了TCP负载均衡+本地一次HTTPS代理的模式来达到相关目的。本次给出最简配置，以访问 http://www.bbb.com 为例:</p>
+<p><font size=4>在IP所在设备上的配置，将访问以TCP的：</p>
+<pre><code class="language-shell">//frpc.ini
+[common]
+server_addr = 11.11.11.11
+server_port = 7000
+token = 123456
+
+[bbb-1]                          
+type = tcp                            
+local_ip = www.bbb.com                 
+local_port = 443                      
+remote_port = 2453                  
+group = bbb             //每个地址需要不一样            
+group_key = bbb                      
+use_compression = true                
+use_encryption = true 
+</code></pre>
+<p><font size=4>在服务器上的配置将tcp端口转发到443的操作,完成相关操作：</p>
+<pre><code class="language-shell">//frpc.ini
+[common]
+server_addr = 127.0.0.1
+server_port = 7000
+token = 123456
+
+[wwwbbbcomhttps]
+type = https
+local_ip = 127.0.0.1
+local_port = 2443   //填入代理过来的端口
+custom_domains = www.bbb.com    //填入想要代理的域名
+use_encryption = true
+use_encryption = true 
+</code></pre>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[杭州健康码申诉步骤]]></title>
+        <id>https://blog.xuejian.site/post/hang-zhou-jian-kang-ma-shen-su-bu-zou/</id>
+        <link href="https://blog.xuejian.site/post/hang-zhou-jian-kang-ma-shen-su-bu-zou/">
+        </link>
+        <updated>2022-01-04T05:20:30.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=4>背景：1月2日中午，突然收到以下短信，提示我健康码由绿变黄，一惊，马上开始申诉操作，中间因为元旦假期的缘故虽然经历了一些曲直，但最终还是变回绿码。</p>
+<figure data-type="image" tabindex="1"><img src="https://s3.xuejian.site/2022/01/20220104092723.png" alt="" loading="lazy"></figure>
+<p><font size=4>1、进入支付宝健康码，点击如图红框所示的“网络申诉”，然后点击“红黄码复合申请”；进入后如实填写，在申诉理由中着重说明自己没有去过疫情中高风险所在的县（市、区）；例如，我最近前往过宁波，但没有去过本次宁波疫情所在的北仑区，就在申诉理由中提现；</p>
+<figure data-type="image" tabindex="2"><img src="https://s3.xuejian.site/2022/01/20220104093122.png" alt="" loading="lazy"></figure>
+<figure data-type="image" tabindex="3"><img src="https://s3.xuejian.site/2022/01/fcfbc67c43446a0a4685ca12cd8fe2b.jpg" alt="" loading="lazy"></figure>
+<p><font size=4>2、拨打12345市长热线，说明黄码情况，并说明已经申请复核，然后从对方处获得所在镇（街道）的联系方式，联系镇（街道）；</p>
+<p><font size=4>3、联系镇（街道），说明黄码情况及已经提交复核申请，对方会处理，或者会告诉具体负责人的电话，联系后讲明缘由，并概述最近去过所在中高风险所在的地级市的活动范围，确认没有去过疫情所在区后，对方会通过审核，健康码会变回绿色。</p>
+<figure data-type="image" tabindex="4"><img src="https://s3.xuejian.site/2022/01/20220104094541.png" alt="" loading="lazy"></figure>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[安全操作之管理后台、堡垒机及gitlab内网部署访问]]></title>
+        <id>https://blog.xuejian.site/post/an-quan-cao-zuo-zhi-guan-li-hou-tai-ji-gitlab-jin-nei-wang-fang-wen/</id>
+        <link href="https://blog.xuejian.site/post/an-quan-cao-zuo-zhi-guan-li-hou-tai-ji-gitlab-jin-nei-wang-fang-wen/">
+        </link>
+        <updated>2021-12-05T00:41:04.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=4>背景：事发公司属于无专职运维人员公司，近期有现象表明由于可能存在的弱密码或漏洞，导致该公司后台数据及代码泄露。经了解，该公司所有服务及代码仓库都部署在云上，同时，为节约成本，该公司宽带无公网IP，无防火墙设备。</p>
+<p><strong><font size=5>一、紧急措施</strong></p>
+<p><font size=4>1、创建管理后台云主机专用的安全组，管理后台所在的云主机重置新的弹性IP，并在安全组中将公司此时的公网出口IP加入80端口的白名单；</p>
+<p><font size=4>2、创建通用安全组，并在安全组中，所有线上系统的云主机的将公司此时的公网出口IP加入ssh端口的白名单；</p>
+<p><font size=4>3、创建gitlab专用安全组，同时，gitlab服务器重置新的弹性IP，22和80端口在安全组中将公司此时的公网出口IP加入白名单；</p>
+<p><strong><font size=5>二、初步恢复手段</strong></p>
+<p><font size=4>目的：由于出现之前的严重情况，后续该公司希望所有云上主机等运维只能通过公司内网进行，并提供远程接入公司网络的服务。</p>
+<p><font size=4>需要的资源：（1）性能处于中流的台式机设备一台；（2）公司业务量最大的区域的同一VPC网络下购买一台最低配的云主机，带宽方面先期按流量计费，使用非弹性公网IP，带宽计费方式后期根据情况进行调整；</p>
+<p><font size=4>1、为不泄露相关信息，本文中，云主机公网IP设定为11.11.11.11，VPC内网IP为172.16.0.143；该云主机创建后，我在上面部署了frps，并新建了专用安全组，保证bind_port已经开放，并保证后续要用到的8000端口不开放访问；配置如下，token、端口和dashboard相关信息都是随机填写：</p>
+<pre><code class="language-shell">[common]
+bind_port = 7000
+dashboard_port = 7500
+dashboard_user = admin
+dashboard_pwd = admin
+token = 123456
+</code></pre>
+<p><font size=4>完成填写后用以下命令启动：</p>
+<pre><code class="language-shell">nohup ./frps -c ./frps.ini &gt;/dev/null 2&gt;&amp;1 &amp;
+</code></pre>
+<p><font size=4>2、在对方公司本地，台式机配置为i5-7600，内存16G，SSD为512G，符合目前需求。该台式机我无法成功安装exsi，为了尽快投入使用，我安装了win10，并在上面安装了Virtualbox和todesk（方便管理）；</p>
+<p><font size=4>3、在win10本地，我设置该机内网IP为192.168.1.240，然后在上面部署frps和frpc，配置分别如下，同样，token、端口和dashboard相关信息都是随机填写；</p>
+<pre><code class="language-shell">//frps.ini
+[common]
+bind_port = 8000
+dashboard_port = 8500
+vhost_http_port = 80
+vhost_https_port = 443
+dashboard_user = admin
+dashboard_pwd = admin
+token = 123456
+</code></pre>
+<pre><code class="language-shell">//frpc.ini
+[common]
+server_addr = 11.11.11.11
+server_port = 7000
+token = 123456
+
+admin_addr = 127.0.0.1
+admin_port = 2000
+
+[frptcp]
+type = tcp
+local_ip = 127.0.0.1
+local_port = 8000
+remote_port = 8000
+use_encryption = true
+use_compression = true
+</code></pre>
+<p><font size=4>完成填写后在cmd中用以下命令启动：</p>
+<pre><code class="language-shell">C:\frp\frps.exe -c C:\frp\frps.ini
+C:\frp\frpc.exe -c C:\frp\frpc.ini
+</code></pre>
+<p><font size=4>完成填写后在cmd中用以下命令进行重载：</p>
+<pre><code class="language-shell">C:\frp\frpc.exe reload -c C:\frp\frpc.ini
+</code></pre>
+<p><font size=4>4、对方使用的域名以aaa.com为例，管理后台所在的云主机为172.16.0.111，以此为例，在最后购买的云主机172.16.0.143进行操作；以上操作时，需要被连接的主机的端口在安全组对frps所在的云主机进行内网IP（同一区域的VPC）或外网IP（不同区域或同一区域不通VPC网络）开放；</p>
+<pre><code class="language-shell">//frpcgs.ini
+[common]
+server_addr = 127.0.0.1
+server_port = 8000
+token = 123456
+
+admin_addr = 127.0.0.1
+admin_port = 2000
+
+[adminssh]
+type = tcp
+local_ip = 172.16.0.111
+local_port = 22
+remote_port = 10000
+use_encryption = true
+use_compression = true
+
+[adminweb]
+type = http
+local_ip = 172.16.0.111
+local_port = 80
+custom_domains = admin.aaa.com
+use_encryption = true
+use_compression = true
+</code></pre>
+<p><font size=4>完成填写后用以下命令启动：</p>
+<pre><code class="language-shell">nohup ./frpc -c ./frpcgs.ini &gt;/dev/null 2&gt;&amp;1 &amp;
+</code></pre>
+<p><font size=4>后期如果是添加或删除等更改，可以使用以下命令reload，无法对frpc进程杀了重启；</p>
+<pre><code class="language-shell">./frpc reload -c ./frpcgs.ini
+</code></pre>
+<p><font size=4>完成后admin.aaa.com的解析切换到192.168.1.240，并删除管理后台所在的云主机的弹性IP；</p>
+<p><font size=4>5、在Virtualbox新建一个Other Linux（64-bit）的虚拟机，配置为2核4G，最大存储为100G，安装centos7，安装完后，网络设置为桥接，IP配置好IP为192.168.1.241，完成后使用以下命令自动完成jumpserver的安装：</p>
+<pre><code class="language-shell">curl -sSL https://github.com/jumpserver/jumpserver/releases/download/v2.16.3/quick_start.sh | bash
+</code></pre>
+<p><font size=4>jumpserver完成安装和配置后，添加云上主机时，图标1中填入192.168.1.240（本地frps所在的IP），端口填入代理回来的端口号；</p>
+<figure data-type="image" tabindex="1"><img src="https://s3.xuejian.site/2021/12/20211205011419.png" alt="" loading="lazy"></figure>
+<p><font size=4>6、在Virtualbox新建一个Other Linux（64-bit）的虚拟机，配置为2核4G，最大存储为100G，安装centos7，安装完后，网络设置为桥接，IP配置好IP为192.168.1.242，完成后安装gitlab，设置完后将代码导入。由于本文使用的是台式机，无硬盘安全保证，在目前的情况下，在对方公司制度上要求每周第一个工作日备份一次镜像，然同时复制到两个不同的移动硬盘中，以防设备损坏造成代码丢失；</p>
+<p><font size=4>7、在Virtualbox新建一个Othe的虚拟机，配置为1核1G，最大存储为5G，安装爱快。爱快安装完成后，在虚拟机界面开放WEB的WAN口访问，并将eth0绑定给WAN1，并将WAN1的IP设置为192.168.1.243。完成以上操作后，设置回公司的OPENVPN，将如图红框标注的部分设置为TCP，这样操作的原因在于目前国内运营商存在对UDP过分Qos的情况；</p>
+<figure data-type="image" tabindex="2"><img src="https://s3.xuejian.site/2021/12/20211205012434.png" alt="" loading="lazy"></figure>
+<p><font size=4>在本地frpc所在的win10上，增加以下配置，配置完成后重载frpc，并将配置中的目标端口TCP 55555在云端frps的安全组中对公网开放；</p>
+<pre><code class="language-shell">[adminssh]
+type = tcp
+local_ip = 192.168.2.243
+local_port = 1194
+remote_port = 55555
+use_encryption = true
+use_compression = true
+</code></pre>
+<p><font size=4>需要注意的是，从爱快上下载的OPENVPN配置，需要改变红框标注的remote的配置，按实际情况填写；</p>
+<figure data-type="image" tabindex="3"><img src="https://s3.xuejian.site/2021/12/20211205013054.png" alt="" loading="lazy"></figure>
+<p><strong><font size=5>三、后期规划方案</strong></p>
+<p><font size=4>规划原因：目前的方案只是解决了棘手的问题，但由于台式机相对不稳定的特点，建议后期迁移到真正的服务器上；</p>
+<p><font size=4>需要增加的设备：（1）一台服务器，装exsi，硬盘raid1；（2）购买一台迷你主机，上面装爱快，做为软路由；</p>
+<p><font size=4>后期规划：（1）去掉本地的frps，在云端部署openvpn，用软路由接入；（2）将回公司的VPN迁移到软路由上；（3）剩下的虚拟机全部迁往服务器做虚拟化。</p>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[利用可道云实现OSS内网图形化]]></title>
+        <id>https://blog.xuejian.site/post/li-yong-ke-dao-yun-shi-xian-oss-nei-wang-tu-xing-hua/</id>
+        <link href="https://blog.xuejian.site/post/li-yong-ke-dao-yun-shi-xian-oss-nei-wang-tu-xing-hua/">
+        </link>
+        <updated>2021-11-18T04:17:13.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=4>背景：因为项目的前端资源在OSS上，需要实现内网测试服务器上使用图形化上传下载文件而不需要分配AccessKey给使用者，最大程度避免各种原因造成AccessKey泄漏。</p>
+<p><strong><font size=5>一、挂载oss至centos主机</strong></p>
+<p><font size=4>1、安装插件，保证Content-Type正确</p>
+<pre><code class="language-shell">sudo yum install mailcap
+</code></pre>
+<p><font size=4>2、下载ossfs的安装包（分centos6.5和centos7.0两者）<br>
+centos6.5：https://ctyunwei.oss-cn-hangzhou.aliyuncs.com/download/ossfs_1.80.5_centos6.5_x86_64.rpm<br>
+centos7.0：https://ctyunwei.oss-cn-hangzhou.aliyuncs.com/download/ossfs_1.80.4_centos7.0_x86_64.rpm</p>
+<p><font size=4>、执行以下命令安装：</p>
+<pre><code class="language-shell">sudo yum localinstall your_ossfs_package
+</code></pre>
+<p><font size=4>、按次序执行以下命令挂载（注意：不要挂载到/tmp目录）：</p>
+<pre><code class="language-shell">echo my-bucket:my-access-key-id:my-access-key-secret &gt; /etc/passwd-ossfs
+chmod 640 /etc/passwd-ossfs
+mkdir -p /oss/ossfs
+ossfs my-bucket /oss/ossfs -ourl=http://oss-cn-hangzhou.aliyuncs.com  -o allow_other
+#ourl后面要跟正确的地址，根据Bucket不同而不同，如果是阿里云的同区域ESC连OSS建议使用内网地址
+</code></pre>
+<p><strong><font size=5>二、centos安装nginx和php环境</strong></p>
+<p><font size=4>本文以编译安装举例，如果不擅长可以使用网上的一键脚本进行安装；</p>
+<p><strong><font size=5>三、图形化设置</strong></p>
+<p><font size=4>1、使用以下命令将图形化的zip包拷贝至新目录（如果后期更新，请更换包名）：</p>
+<pre><code class="language-shell">cd /www
+wget http://static.kodcloud.com/update/download/kodexplorer4.40.zip
+unzip kodexplorer4.40.zip
+mv kodexplorer4.40 kodexplorer
+chmod -R 777 kodexplorer
+</code></pre>
+<p><font size=4>2、进入nginx配置文件夹/usr/local/nginx/conf/vhost，新建域名开头的配置文件，以本文为例，新建了yqsetting.conf这个配置文件，配置如下：</p>
+<pre><code class="language-shell">server {
+        listen 3505;
+        server_name  xxx.xxx.com;
+        root  /www/KodExplorer;
+        index  index.html index.htm index.php default.php tz.php;
+        error_page   500 502 503 504  /50x.html;
+
+        location = /50x.html {
+        root html;
+        }
+
+        location ~* ^.+\.php(\/.*)*$ {
+        fastcgi_pass   127.0.0.1:9000;
+        #fastcgi_pass unix:/usr/local/php5-fpm.sock;
+        fastcgi_index  index.php;
+        fastcgi_param  SCRIPT_FILENAME  $document_root$fastcgi_script_name;
+        include        fastcgi_params;
+    }
+}
+</code></pre>
+<p><font size=4>3、按照图形指示设置完admin的密码后登陆，然后依照图示步骤添加用户即可</p>
+<figure data-type="image" tabindex="1"><img src="https://s3.xuejian.site/2019/10/20191028135347.png" alt="" loading="lazy"></figure>
+<p><font size=4>4、添加完用户后，将我们挂载的OSS目录做软连接到该用户目录下：</p>
+<pre><code class="language-shell">ln -s /oss/setting /www/KodExplorer/data/User/setting/home/.
+</code></pre>
+<p><font size=4>5、完成后可以使用刚才创建的用户直接登陆进行上传下载操作。</p>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[下载Instagram上的高画质图片]]></title>
+        <id>https://blog.xuejian.site/post/xia-zai-instagram-shang-de-gao-hua-zhi-tu-pian/</id>
+        <link href="https://blog.xuejian.site/post/xia-zai-instagram-shang-de-gao-hua-zhi-tu-pian/">
+        </link>
+        <updated>2021-09-14T06:14:21.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=4>在电脑上看Instagram时，会发现图片质量都不高。但是，用户上传的时候是有高画质图片的。本次，我们就来看看有没有办法下载到高画质的Instagram图片吧。</p>
+<p><font size=4>本次教程，以摘取一家三星门店的Instagram图片为例，对方Instagram地址：<a href="https://www.instagram.com/samsung.khh/">https://www.instagram.com/samsung.khh/</a></p>
+<p><font size=4>1、随便打开该商家的一张海报图片，按照Instagram的预设，我们只有小的预览图可见，相对来说清晰度不高；</p>
+<figure data-type="image" tabindex="1"><img src="https://s3.xuejian.site/2021/09/20210914135910.png" alt="" loading="lazy"></figure>
+<p><font size=4>2、按住红框1处右上方的三个点，选择红框2处的“复制链接”，或者原文地址</p>
+<figure data-type="image" tabindex="2"><img src="https://s3.xuejian.site/2021/09/20210914140115.png" alt="" loading="lazy"></figure>
+<p><font size=4>3、将刚才获得的原文链接复制到另一个页面后回车打开</p>
+<figure data-type="image" tabindex="3"><img src="https://s3.xuejian.site/2021/09/20210914140502.png" alt="" loading="lazy"></figure>
+<p><font size=4>4、如下图所示，将地址中的?utm_source=ig_web_copy_link替换为media/?size=l；</p>
+<figure data-type="image" tabindex="4"><img src="https://s3.xuejian.site/2021/09/20210914140811.png" alt="" loading="lazy"></figure>
+<figure data-type="image" tabindex="5"><img src="https://s3.xuejian.site/2021/09/20210914140911.png" alt="" loading="lazy"></figure>
+<p><font size=4>5、完成以上操作后，按回车，即可得到高画质Instagram图片；</p>
+<figure data-type="image" tabindex="6"><img src="https://s3.xuejian.site/2021/09/20210914141048.png" alt="" loading="lazy"></figure>
+<p><font size=4>6、将图片右击保存，可以看到分辨率比之前直接保存下来的要好，可以拿来做为素材喽</p>
+<figure data-type="image" tabindex="7"><img src="https://s3.xuejian.site/2021/09/20210914141248.png" alt="" loading="lazy"></figure>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[旧安卓手机帮助全家去广告]]></title>
+        <id>https://blog.xuejian.site/post/jiu-an-zhuo-shou-ji-bang-zhu-quan-jia-qu-guang-gao/</id>
+        <link href="https://blog.xuejian.site/post/jiu-an-zhuo-shou-ji-bang-zhu-quan-jia-qu-guang-gao/">
+        </link>
+        <updated>2021-04-26T05:56:26.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=4>背景：Android经过这么多年的发展，很多人家里都有淘汰的N年前的旧Android手机。这些旧手机用起来卡顿，丢抽屉又有点可惜，因此本文借助AdGuard Home，将其中部分旧手机改造成家里的去广告终端。</p>
+<p><font size=4>前提条件：需要旧Android手机可以root，本文以小米2s为例。</p>
+<p><font size=4>需要安装的程序有两个，这两个先下载并安装好：（1）BusyBox：[BusyBox下载地址](https://tp.baidu404.top/tmp/BusyBox Pro-v70.apk &quot;BusyBox下载地址&quot;) ；（2）linux deploy：<a href="https://tp.baidu404.top/tmp/linuxdeploy-2.6.0-259.apk" title="linux deploy下载地址">linux deploy下载地址</a> ；</p>
+<p><font size=4>1、打开BusyBox，点击Install完成安装‘</p>
+<p><font size=4>2、打开Linux Deploy，点击红框标注的地方，进入设置</p>
+<figure data-type="image" tabindex="1"><img src="https://s3.xuejian.site/2021/04/20210426133402.png" alt="" loading="lazy"></figure>
+<p><font size=4>3、本文中，我将系统设置为Centos 7，然后拉下来，将SSH选项打开；</p>
+<figure data-type="image" tabindex="2"><img src="https://s3.xuejian.site/2021/04/20210426133631.png" alt="" loading="lazy"></figure>
+<figure data-type="image" tabindex="3"><img src="https://s3.xuejian.site/2021/04/20210426133706.png" alt="" loading="lazy"></figure>
+<p><font size=4>4、完成以上设置后，退回上一层点击，点击右上角，选择“安装”；</p>
+<figure data-type="image" tabindex="4"><img src="https://s3.xuejian.site/2021/04/20210426133846.png" alt="" loading="lazy"></figure>
+<p><font size=4>5、出现以下的提示，说明安装完成，然后点击红框标注的“启动”，从而把系统开启：</p>
+<pre><code class="language-shell"> ::Configuring extra/ssh ...
+ &lt;&lt;&lt; deploy
+</code></pre>
+<figure data-type="image" tabindex="5"><img src="https://s3.xuejian.site/2021/04/20210426134159.png" alt="" loading="lazy"></figure>
+<p><font size=4>6、SSH连接到刚才的虚拟机，先查看CPU版本，我的是32位，所以本文以32位为例子：</p>
+<pre><code class="language-shell">sudo -s
+getconf LONG_BIT
+32
+</code></pre>
+<p><font size=4>7、获取AdGuard Home安装包，需要注意的是，该虚拟机系统没有wget，需要先安装：</p>
+<pre><code class="language-shell">yum -y install wget
+cd /tmp
+wget https://static.adguard.com/adguardhome/release/AdGuardHome_linux_armv5.tar.gz
+tar -zxvf AdGuardHome_linux_armv5.tar.gz
+mkdir /usr/local/AdGuardHome
+cd AdGuardHome
+mkdir /usr/local/AdGuardHome
+mv AdGuardHome /usr/local/AdGuardHome/.
+cd /usr/local/AdGuardHome/
+./AdGuardHome --service install
+</code></pre>
+<p><font size=4>当出现如下图所示的文字时，说明安装成功；默认的管理地址为http://内网IP:3000 来进入设置界面；</p>
+<figure data-type="image" tabindex="6"><img src="https://s3.xuejian.site/2021/02/20210208220145.png" alt="" loading="lazy"></figure>
+<p><font size=4>8、进入设置界面后，点击下一步；</p>
+<figure data-type="image" tabindex="7"><img src="https://s3.xuejian.site/2021/0220210209125828.png" alt="" loading="lazy"></figure>
+<p><font size=4>9、红框标注的管理端口最好不要用默认的80，本文以87为示例；dns口使用默认的53端口</p>
+<figure data-type="image" tabindex="8"><img src="https://s3.xuejian.site/2021/0220210209125927.png" alt="" loading="lazy"></figure>
+<p><font size=4>10、输入可以记住的账号密码，然后一直下一步完成操作；</p>
+<figure data-type="image" tabindex="9"><img src="https://s3.xuejian.site/2021/0220210209130132.png" alt="" loading="lazy"></figure>
+<p><font size=4>11、进入主界面后，进入设置-DNS设置，填入DNS，一般可以用114.114.114.114或223.5.5.5；</p>
+<figure data-type="image" tabindex="10"><img src="https://s3.xuejian.site/2021/02/20210210205142.png" alt="" loading="lazy"></figure>
+<figure data-type="image" tabindex="11"><img src="https://s3.xuejian.site/2021/02/20210210205219.png" alt="" loading="lazy"></figure>
+<p><font size=4>12、进入过滤器-DNS封锁清单，进行规则设置</p>
+<figure data-type="image" tabindex="12"><img src="https://s3.xuejian.site/2021/02/20210210205344.png" alt="" loading="lazy"></figure>
+<p><font size=4>规则清单：</p>
+<pre><code class="language-shell">AdAway，https://adaway.org/hosts.txt
+乘风 视频，https://gitee.com/xinggsf/Adblock-Rule/raw/master/mv.txt
+anti-AD, https://anti-ad.net/easylist.txt
+隐私相关
+CJX's uBlock list，https://gitee.com/cjx82630/cjxlist/raw/master/cjx-ublock.txt
+EasyPrivacy，https://easylist-downloads.adblockplus.org/easyprivacy.txt
+I don't care about cookies，https://www.i-dont-care-about-cookies.eu/abp/
+</code></pre>
+<p><font size=4>13、完成以上设置后，在家中的路由器上将手机的IP做为DNS IP进行下发，便可完成操作。</p>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[旧电脑利用之安装AdGuard Home去广告]]></title>
+        <id>https://blog.xuejian.site/post/jiu-dian-nao-li-yong-zhi-an-zhuang-adguard-home-qu-guang-gao/</id>
+        <link href="https://blog.xuejian.site/post/jiu-dian-nao-li-yong-zhi-an-zhuang-adguard-home-qu-guang-gao/">
+        </link>
+        <updated>2021-02-12T08:04:30.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=4>Windows的旧电脑安装AdGuard Home后，可以帮助我们完成同一WiFi下所有设备去广告，这样不仅可以让旧设备发挥余热，也可以让家里的上网体验增强，防止恼人的广告来纠缠我们。</p>
+<p><font size=4>1、AdGuard Home包下载，下载地址为：<a href="https://static.adguard.com/adguardhome/edge/AdGuardHome_windows_amd64.zip" title="AdGuard Home Windows版下载地址">AdGuard Home Windows版下载地址</a>；</p>
+<p><font size=4>2、将下载回来的压缩包进行解压；</p>
+<p><font size=4>3、进入C:\Program Files，然后新建一个文件夹，名字为AdGuard_Home；新建后，进入该文件夹；</p>
+<p><font size=4>4、将 AdGuardHome.exe 移动到刚刚建立的AdGuard_Home文件夹中，然后如下图所示，在该文件夹上键入cmd,进入命令行界面；</p>
+<figure data-type="image" tabindex="1"><img src="https://s3.xuejian.site/2021/02/20210208213658.png" alt="" loading="lazy"></figure>
+<p><font size=4>5、黑框中输入以下命令:</p>
+<pre><code class="language-bash">.\AdGuardHome.exe --service install
+</code></pre>
+<p><font size=4>当出现如下图所示的文字时，说明安装成功；默认的管理地址为http://内网IP:3000 来进入设置界面；</p>
+<figure data-type="image" tabindex="2"><img src="https://s3.xuejian.site/2021/02/20210208220145.png" alt="" loading="lazy"></figure>
+<p><font size=4>6、进入设置界面后，点击下一步；</p>
+<figure data-type="image" tabindex="3"><img src="https://s3.xuejian.site/2021/0220210209125828.png" alt="" loading="lazy"></figure>
+<p><font size=4>7、红框标注的管理端口最好不要用默认的80，本文以87为示例；dns口使用默认的53端口</p>
+<figure data-type="image" tabindex="4"><img src="https://s3.xuejian.site/2021/0220210209125927.png" alt="" loading="lazy"></figure>
+<p><font size=4>8、输入可以记住的账号密码，然后一直下一步完成操作；</p>
+<figure data-type="image" tabindex="5"><img src="https://s3.xuejian.site/2021/0220210209130132.png" alt="" loading="lazy"></figure>
+<p><font size=4>9、进入主界面后，进入设置-DNS设置，填入DNS，一般可以用114.114.114.114或223.5.5.5；</p>
+<figure data-type="image" tabindex="6"><img src="https://s3.xuejian.site/2021/02/20210210205142.png" alt="" loading="lazy"></figure>
+<figure data-type="image" tabindex="7"><img src="https://s3.xuejian.site/2021/02/20210210205219.png" alt="" loading="lazy"></figure>
+<p><font size=4>10、进入过滤器-DNS封锁清单，进行规则设置</p>
+<figure data-type="image" tabindex="8"><img src="https://s3.xuejian.site/2021/02/20210210205344.png" alt="" loading="lazy"></figure>
+<p><font size=4>规则清单：</p>
+<pre><code class="language-bash">AdAway，https://adaway.org/hosts.txt
+乘风 视频，https://gitee.com/xinggsf/Adblock-Rule/raw/master/mv.txt
+乘风 广告，https://gitee.com/xinggsf/Adblock-Rule/raw/master/rule.txt
+My AdFilters，https://gitee.com/halflife/list/raw/master/ad.txt
+隐私相关
+CJX's uBlock list，https://gitee.com/cjx82630/cjxlist/raw/master/cjx-ublock.txt
+EasyPrivacy，https://easylist-downloads.adblockplus.org/easyprivacy.txt
+I don't care about cookies，https://www.i-dont-care-about-cookies.eu/abp/
+</code></pre>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[dnsmasq使用多个非标端口上游dns]]></title>
+        <id>https://blog.xuejian.site/post/dnsmasq-shi-yong-duo-ge-fei-biao-shang-you-dns-fu-wu/</id>
+        <link href="https://blog.xuejian.site/post/dnsmasq-shi-yong-duo-ge-fei-biao-shang-you-dns-fu-wu/">
+        </link>
+        <updated>2021-02-05T05:07:52.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=4>背景：日益严重的dns抢答，造成很多时候无法获得真正的权威dns回应。经过排查发现，大部分运营商的dns抢答针对的是UDP 53端口，因此，对之前搭建的内网dnsmasq进行改造，以支持上发到使用非标端口的DNS服务器进行查询，从而避免运营商的DNS缓存甚至DNS投毒。</p>
+<p><font size=4>dnsmasq服务器的搭建参考之前的文件，本文在此基础上进行相关改动：<a href="https://blog.xuejian.site/post/dns-fu-wu-qi-bu-shu/" title="《DNS服务器部署》">《DNS服务器部署》</a></p>
+<p><font size=4>1、注释掉resolv-file选项，目的是防止其从Linux系统配置的resolv.conf里读取上游DNS：</p>
+<pre><code class="language-shell">#resolv-file=/etc/resolv.conf
+</code></pre>
+<p><font size=4>2、使用server添加上游非标dns，如果是一个非标dns，则直接使用以下命令即可：</p>
+<pre><code class="language-shell">server=202.141.162.123#5353
+</code></pre>
+<p><font size=4>2、如果是两个及以上非标dns，则需要使用以下命令即可：</p>
+<pre><code class="language-shell">server=/#/202.141.162.123#5353
+server=/#/202.141.176.93#5353
+</code></pre>
+<p><font size=4>3、做完以上操作后，需要重启dnsmasq才能生效。</p>
+<p><font size=4>附录，各类支持非标端口DNS（支持TCP和UDP的53及5353端口）：</p>
+<p><font size=4>国内支持非标端口DNS：</p>
+<pre><code class="language-shell">中科大防DNS
+202.141.162.123 中国电信
+202.38.93.153 教育网
+202.141.176.93 中国移动
+</code></pre>
+<p><font size=4>海外支持非标端口DNS</p>
+<pre><code class="language-shell">OpenDNS (推荐):
+支持5353,443端口
+208.67.222.222
+208.67.220.220
+
+AdGuard DNS:
+使用以下服务器拦截广告，跟踪和钓鱼
+176.103.130.130
+176.103.130.131
+2a00:5a60::ad1:0ff
+2a00:5a60::ad2:0ff
+
+默认 + 拦截成人网站 + 安全搜索
+176.103.130.132
+176.103.130.134
+2a00:5a60::bad1:0ff
+2a00:5a60::bad2:0ff
+</code></pre>
+<p><font size=4>注意：非海外服务器请使用国内DNS，否则会存在两个问题：1、相关DNS请求过墙可能会被干扰，造成解析结果不准确；2、海外DNS服务器请求到的都是该域名针对海外解析的IP，可能会在国内访问存在卡顿问题。如腾讯，在海外的IP国内连接比较卡顿。</p>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[CDN开启https优化]]></title>
+        <id>https://blog.xuejian.site/post/cdn-kai-qi-https-you-hua/</id>
+        <link href="https://blog.xuejian.site/post/cdn-kai-qi-https-you-hua/">
+        </link>
+        <updated>2021-01-29T12:05:57.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=4>背景：上次我们分享了nginx上做https优化的相关设置，有小伙伴反馈说目前他们公司很多域名已经在通过CDN做加速，并且CDN到他们的web服务器之间使用的是HTTP回源，因此之前提到的方法暂时无法优化类似的HTTPS的请求。针对他们的需求，我以国内几家大的云服务厂商的产品为例，进行说明，核心是开启HTTP/2和OCSP。</p>
+<p><strong><font size=5>一、腾讯云CDN</strong></p>
+<p><font size=4>1、进入内容分发网络-域名管理，点击红框标注的“管理”</p>
+<figure data-type="image" tabindex="1"><img src="https://s3.xuejian.site/2021/01/20210128191137.png" alt="" loading="lazy"></figure>
+<p><font size=4>2、进入红框标注的“HTTPS配置”</p>
+<figure data-type="image" tabindex="2"><img src="https://s3.xuejian.site/2021/01/20210128191247.png" alt="" loading="lazy"></figure>
+<p><font size=4>3、配置好证书后，将红框标注的选项打开即可。</p>
+<figure data-type="image" tabindex="3"><img src="https://s3.xuejian.site/2021/01/20210128191431.png" alt="" loading="lazy"></figure>
+<p><strong><font size=5>二、阿里云CDN</strong></p>
+<p><font size=4>1、进入CDN-域名管理，点击红框标注的“管理”</p>
+<figure data-type="image" tabindex="4"><img src="https://s3.xuejian.site/2021/01/20210129200342.png" alt="" loading="lazy"></figure>
+<p><font size=4>2、进入红框标注的“HTTPS配置”</p>
+<figure data-type="image" tabindex="5"><img src="https://s3.xuejian.site/2021/01/20210129200422.png" alt="" loading="lazy"></figure>
+<p><font size=4>3、配置好证书后，将红框标注的选项打开即可。</p>
+<figure data-type="image" tabindex="6"><img src="https://s3.xuejian.site/2021/01/20210129200541.png" alt="" loading="lazy"></figure>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[nginx https加速]]></title>
+        <id>https://blog.xuejian.site/post/nginx-https-jia-su/</id>
+        <link href="https://blog.xuejian.site/post/nginx-https-jia-su/">
+        </link>
+        <updated>2021-01-26T10:48:40.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=4>背景：我们上线HTTPS后，发现有时候用户端打开会比HTTP的时候慢。为了尽量避免这些情况的出现，因此进行HTTPS的加速配置。</p>
+<p><strong><font size=5>一、配置国内证书或开启OCSP Stapling</strong></p>
+<p><font size=4>在使用Let's Encrypt 证书时，如果在某些情况下用户需要验证证书的情况下，可能会由于网络原因，造成用户与Let's Encrypt连接不畅，造成用户访问较慢（iOS设备出现该问题的可能性较大）。因此，换为国内证书可以有效避免该情况的发生。</p>
+<p><font size=4>如果因为各种原因无法更换未国内证书，可以在nginx配置中开启OCSP Stapling，这样省略证书验证步骤，开启方法如下：</p>
+<pre><code class="language-shell">  resolver 114.114.114.114;
+  ssl_stapling on;
+  ssl_stapling_verify on;
+</code></pre>
+<p><font size=4>需要注意的是，如果是国内网络，该部分不要使用8.8.8.8等国外的DNS服务器，因为目前运营商的限制，该部分DNS请求会被当地运营商的相关设备直接劫持；如果是海外网络，请根据当地网络状态进行测试。</p>
+<p><strong><font size=5>二、开启HTTP/2</strong></p>
+<p><font size=4>目前情况下，我们一个页面有多次请求，如果使用传统模式，需要开启多个连接才能加速访问；在HTTP/2中，可以做到一个连接中进行并行请求，减少连接时间，从而加速访问。开启方法如下：</p>
+<pre><code class="language-shell">listen 443 ssl http2;
+</code></pre>
+<p><strong><font size=5>三、进行SSL Session 缓存</strong></p>
+<p><font size=4>开启该缓存的目的在于较少TLS校验的次数，从而较少相关验证引起的延时，开启方法如下，本文中，以100M内存和5小时缓存为例，其他情况请依据现实配置决定：</p>
+<pre><code class="language-shell">ssl_session_cache   shared:SSL:100m;
+ssl_session_timeout 5h;
+</code></pre>
+<p><strong><font size=5>四、修改ssl_buffer_size（可选）</strong></p>
+<p><font size=4>该部分的配置在于控制在发送数据时的 buffer 大小，默认设置是 16k。如果是网站，可以将该值调整为4K；如果是大文件，还是不修改比较好。该部分配置为可选，根据业务情况来做选择，选择范围为2K-16K：</p>
+<pre><code class="language-shell">ssl_buffer_size 4k;
+</code></pre>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[百度网盘 SVIP 超级会员年卡限时历史低价 - 只需 188 元]]></title>
+        <id>https://blog.xuejian.site/post/bai-du-wang-pan-svip-chao-ji-hui-yuan-nian-qia-xian-shi-li-shi-di-jie-zhi-xu-188-yuan/</id>
+        <link href="https://blog.xuejian.site/post/bai-du-wang-pan-svip-chao-ji-hui-yuan-nian-qia-xian-shi-li-shi-di-jie-zhi-xu-188-yuan/">
+        </link>
+        <updated>2021-01-26T02:20:40.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=4>百度云盘是我们经常使用到的产品，但作为免费用户的我们，下载文件往往慢到让人怀疑人生，而超级会员则完全不限速，基本都能跑满你的带宽。所以如果你经常需要下载，那么还是强烈建议入手百度网盘超级会员 SVIP 来给自己节省时间。而且还提供有 5TB 空间、离线下载、在线播放视频等高级功能。</p>
+<p><font size=4>目前百度网盘超级会员 SVIP正在进行限时优惠打折活动，12 个月的 SVIP 年卡原价 298 元，现在只需 188 元即可入手年卡，再到双 11 的历史低价！同时，该京东店是百度云盘官方店，所以不存在风险。</p>
+<p><font size=4>百度云盘SVIP年卡充值地址：</p>
+<p><font size=4>1、点击链接充值：<a href="https://u.jd.com/wmTiHts" title="百度网盘超级会员 SVIP年卡">百度网盘超级会员 SVIP年卡</a></p>
+<p><font size=4>2、扫码以下二维码充值。</p>
+<figure data-type="image" tabindex="1"><a href="https://u.jd.com/wmTiHts"><img src="https://s3.xuejian.site/2021/01/20210126102339.png" alt="" loading="lazy"></a></figure>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[2021年货节红包]]></title>
+        <id>https://blog.xuejian.site/post/2021-nian-huo-jie-hong-bao/</id>
+        <link href="https://blog.xuejian.site/post/2021-nian-huo-jie-hong-bao/">
+        </link>
+        <updated>2021-01-19T04:02:28.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=4>临近年底，家家都在如火如荼备年货中，各大电商也纷纷开启线上年货节狂欢促销，同时也都纷纷使出红包“杀手锏”，狂撒现金，下单直接当钱花。</p>
+<p><strong><font size=4>一、京东红包</strong></p>
+<p><font size=4>京东的红包可以直接在结算订单时抵现金使用，领到的红包就是现金了。虽然每次不高，但积少成多，数量还是比较客观的。如果可以领到888块的大红包，那是再好不过的了。</p>
+<p><font size=4>京东红包领取地址：</p>
+<p><a href="https://u.jd.com/tWCIreg" title="电脑端红包">电脑端红包</a></p>
+<p><a href="https://u.jd.com/tQCGg3h" title="手机端红包">手机端红包</a></p>
+<p><font size=4>京东红包活动时间：（1）活动参与时间：2021年1月18日18:00:00-2021年2月1日23:59:59（15天）；（2）京东红包使用时间： 2021年1月18日-2021年1月24日期间领取的红包使用时间为2021年1月18日-2021年1月24日； 2021年1月25日-2021年2月1日期间领取的红包使用时间为2021年1月25 日-2021年2月5日；</p>
+<p><font size=4>京东红包玩法说明：（1）页面抽取可获得： 活动期间用户每日通过页面可随机抽取（每日至多中奖 3 次，可随机获得京东红包、品类东券或店铺券），京东 红包面额最高888元，未在京东下过单的用户参与活动将有机会获得神秘新客京东红包，更有专属福利购！仅限 京享值150及以上的用户可参与；（2）分享好友助力可获得京东红包（仅可在京东主站、手机京东等环境下参与） ： 通过点击页面按钮邀请好友助力可再获得最高 17.6 元京东红包。好友成功助力（即领取红包）后可为邀请人增 加火力值，邀请京东新用户助力可一次性增加更多火力值！邀好友集火力值分为2个阶段，当火力值累积至50、 100 点时即可点击领取 8.8 元红包各一个，第 2 阶段于1 月25 日 0 点开启，活动期间集火力值不会清 0，且仅 可参与集满 100 点火力值一次。该红包数量有限，请随时关注火力值累计情况，并在活动结束前及时领取红包！ 分享集火力值奖励红包活动仅限京享值 150 及以上的用户可参与，奖励红包的使用时间：2021 年 1 月 18 日2021年2月5日；</p>
+<p><strong><font size=4>二、天猫超级红包</strong></p>
+<p><font size=4>超级红包可在支付环节直接无门槛抵现使用，相当于现金，直接可抵扣；使用红包的订单还可以同时使用优惠券、享受满减、直降等其他同期优惠，红包与之不冲突，相当于可叠加一切优惠使用！</p>
+<p><font size=4>天猫红包领取地址：</p>
+<p><font size=4>天猫超级红包二维码</p>
+<figure data-type="image" tabindex="1"><img src="https://s3.xuejian.site/2021/01/20210119120618.png" alt="天猫超级红包二维码" title="天猫超级红包二维码" loading="lazy"></figure>
+<p><font size=4>天猫超级红包淘口令：</p>
+<pre><code class="language-bash">4👈￥yZ6Jcu46uqM￥👉淘一宝👈 https://m.tb.cn/h.4iJtRDH【2021天喵年礼节——超级红包主会场（每满300减30，更有超级红包等你来抢）】
+</code></pre>
+<p><font size=4>红包领取时间：1月17日0点-1月25日24点；</p>
+<p><font size=4>红包使用时间：1月20日0点—1月25日24点</p>
+<p><font size=4>领取次数：每天1次机会，除现金红包外，还可能会领到不同面额优惠券；</p>
+<p><font size=4>这里敲重点！除1月17日首发日千万奖池需重点关注外，1月19日、21日、24日三天均为红包加码日！建议设置好日历，这些日子领到2021元大红包的几率很高哟！</p>
+<p><strong><font size=4>三、拼多多年货红包</strong></p>
+<p><font size=4>拼多多的年货节，2021大促年前最后一波。</p>
+<p><font size=4>拼多多红包领取地址：</p>
+<p><a href="https://p.pinduoduo.com/1EbygM3y" title="拼多多年货红包领取地址">拼多多年货红包领取地址</a></p>
+<p><font size=4>活动时间：2021.01.18 14:05:42 至 2021.01.31 23:59:59</p>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[腾讯云CDN加速GitHub图床]]></title>
+        <id>https://blog.xuejian.site/post/teng-xun-yun-cdn-jia-su-github-tu-chuang/</id>
+        <link href="https://blog.xuejian.site/post/teng-xun-yun-cdn-jia-su-github-tu-chuang/">
+        </link>
+        <updated>2021-01-12T12:12:40.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=3>背景：GitHub图床本身比较好用，但由于其在国内没有节点，导致速度较慢。为了解决以上问题，在之前GitHub图床的基础上，加入了腾讯云CDN进行国内访问加速，其他CDN使用方法类似。</p>
+<p><font size=3>关于Windows下使用GitHub图床，之前已经写了一篇说明：<a href="https://blog.xuejian.site/post/windows-xia-shi-yong-github-tu-chuang/" title="《Windows下使用github图床》">《Windows下使用github图床》</a></p>
+<p><strong><font size=4>一、使用frp将图床反代到香港服务器（可选）</strong></p>
+<p><font size=3>1、这部分作为可选选项，因为如果直接访问到GitHub的节点，会导致首次加载速度较慢，因此在本步骤上进行了处理，如果使用其他加速GitHub比较好的CDN，可以忽略此步，直接进行CDN部分设置；</p>
+<p><font size=3>2、在本地部署frps和frpc，将frpc指向本地的frps，这么做的目的是为了不在上面部署ssl证书，防止因为该节点上的证书问题造成访问问题；</p>
+<pre><code class="language-shell">[common]
+server_addr = 127.0.0.1
+server_port = 9100
+token = 123456
+
+[tptest]
+type = https
+local_ip = tptest.github.io  //此处填入图床地址，仓库名称+github.io
+local_port = 443
+custom_domains = tp.xxx.xxx  //填入你仓库的自定义域名
+</code></pre>
+<p><strong><font size=4>二、腾讯云CDN上设置加速</strong></p>
+<p><font size=3>1、按图示步骤，进入域名添加</p>
+<figure data-type="image" tabindex="1"><img src="https://s3.xuejian.site/2021/01/20210112175141.png" alt="" loading="lazy"></figure>
+<p><font size=3>2、如果进行了第一部分的操作，在源站中填入服务器的公网IP；</p>
+<figure data-type="image" tabindex="2"><img src="https://s3.xuejian.site/2021/01/20210112175856.png" alt="" loading="lazy"></figure>
+<p><font size=3>如果没有进行，这边填入仓库名称+github.io</p>
+<figure data-type="image" tabindex="3"><img src="https://s3.xuejian.site/2021/01/20210112175938.png" alt="" loading="lazy"></figure>
+<p><font size=3>4、点击红框标注的“管理”，进入该站点的管理页面；</p>
+<figure data-type="image" tabindex="4"><img src="https://s3.xuejian.site/2021/01/20210112180244.png" alt="" loading="lazy"></figure>
+<p><font size=3>5、进入https配置选项，进行https配置，完成后便可用（如果没有证书，先申请一个，免费证书）。</p>
+<figure data-type="image" tabindex="5"><img src="https://s3.xuejian.site/2021/01/20210112184046.png" alt="" loading="lazy"></figure>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[IOS14下设置白名单上网]]></title>
+        <id>https://blog.xuejian.site/post/ios14-xia-she-zhi-bai-ming-dan-shang-wang/</id>
+        <link href="https://blog.xuejian.site/post/ios14-xia-she-zhi-bai-ming-dan-shang-wang/">
+        </link>
+        <updated>2020-12-01T07:27:35.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=3>背景：由于iOS 14默认在不同的wifi上使用不同的mac地址，导致我们加入的mac白名单失效；为了避免这个问题，在需要使用mac白名单的wifi热点上，可以进行以下设置来使用真实mac，来达到mac白名单的效果。</p>
+<p><font size=3>1、点击iPhone上的如图所示的设置，进入设置界面；</p>
+<figure data-type="image" tabindex="1"><img src="https://s3.xuejian.site/2020/11/20201110181714.jpg" alt="" loading="lazy"></figure>
+<p><font size=3>2、在设置界面，进入截图红框标注的无线局域网；</p>
+<figure data-type="image" tabindex="2"><img src="https://s3.xuejian.site/2020/11/20201110182559.png" alt="" loading="lazy"></figure>
+<p><font size=3>3、找到场所的wifi，以本次为例，我们的场所的wifi为“天蚕”，点击wifi名字后面红框标注的图标；</p>
+<figure data-type="image" tabindex="3"><img src="https://s3.xuejian.site/2020/11/20201110182841.png" alt="" loading="lazy"></figure>
+<p><font size=3>4、进入后，将红框标注的“私有地址”选项关闭；</p>
+<figure data-type="image" tabindex="4"><img src="https://s3.xuejian.site/2020/11/20201110183059.png" alt="" loading="lazy"></figure>
+<p><font size=3>5、退回设置界面，找到红框标注的“通用”，点击进入；</p>
+<figure data-type="image" tabindex="5"><img src="https://s3.xuejian.site/2020/11/20201110183220.png" alt="" loading="lazy"></figure>
+<p><font size=3>6、进入红框标注的“关于本机”；</p>
+<figure data-type="image" tabindex="6"><img src="https://s3.xuejian.site/2020/11/20201110183409.png" alt="" loading="lazy"></figure>
+<p><font size=3>7、将红框标注的无线局域网地址加入白名单，即可完成操作。</p>
+<figure data-type="image" tabindex="7"><img src="https://s3.xuejian.site/2020/11/20201110183736.png" alt="" loading="lazy"></figure>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[华强北版二代AirPods分享]]></title>
+        <id>https://blog.xuejian.site/post/hua-qiang-bei-ban-er-dai-airpods-fen-xiang/</id>
+        <link href="https://blog.xuejian.site/post/hua-qiang-bei-ban-er-dai-airpods-fen-xiang/">
+        </link>
+        <updated>2020-11-29T13:00:26.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=3>背景：在网上看蓝牙耳机芯片时，看到华强北在使用台湾洛达芯片制造华强北版AirPods，抱着试试看的态度，直接从深圳购买了，今天到手，发现比较好用，哈哈。</p>
+<p><strong><font size=4>开箱</strong></p>
+<p><font size=3>1、拆开快递，本体包装盒就是一个仿照AirPods的包装盒；</p>
+<figure data-type="image" tabindex="1"><img src="https://s3.xuejian.site/2020/11/20201129202846.png" alt="" loading="lazy"></figure>
+<p><font size=3>2、侧边的说明，居然也和AirPods一样，而且看说明居然支持无线充电，待会儿测试一下；</p>
+<figure data-type="image" tabindex="2"><img src="https://s3.xuejian.site/2020/11/20201129203131.png" alt="" loading="lazy"></figure>
+<p><font size=3>3、这盒子有点紧，比较难开，打开后，上面是说明书；</p>
+<figure data-type="image" tabindex="3"><img src="https://s3.xuejian.site/2020/11/20201129203304.png" alt="" loading="lazy"></figure>
+<p><font size=3>4、既然不是正品，说明书我就不看了，直接去掉说明书，可以看到耳机盒；</p>
+<figure data-type="image" tabindex="4"><img src="https://s3.xuejian.site/2020/11/20201129203921.png" alt="" loading="lazy"></figure>
+<p><font size=3>5、拿开耳机盒和塑料，最下方是数据线，不知道有没有mfi，没设备可以测试，哈哈；</p>
+<figure data-type="image" tabindex="5"><img src="https://s3.xuejian.site/2020/11/20201129204112.png" alt="" loading="lazy"></figure>
+<p><strong><font size=4>使用</strong></p>
+<p><font size=3>1、打开后，直接弹出窗口，点击“连接”进行下一步；</p>
+<figure data-type="image" tabindex="6"><img src="https://s3.xuejian.site/2020/11/20201129204422.png" alt="" loading="lazy"></figure>
+<p><font size=3>2、根据提示，按住耳机仓后面的按钮；</p>
+<figure data-type="image" tabindex="7"><img src="https://s3.xuejian.site/2020/11/20201129204604.png" alt="" loading="lazy"></figure>
+<p><font size=3>3、配对成功后，进行嘿Siri相关设置；</p>
+<figure data-type="image" tabindex="8"><img src="https://s3.xuejian.site/2020/11/20201129204841.png" alt="" loading="lazy"></figure>
+<p><font size=3>4、设置完成后，iCloud会自动完成相关设置，并在界面上弹出；</p>
+<figure data-type="image" tabindex="9"><img src="https://s3.xuejian.site/2020/11/20201129205039.png" alt="" loading="lazy"></figure>
+<p><font size=3>5、负一屏上会有相关实时显示；</p>
+<figure data-type="image" tabindex="10"><img src="https://s3.xuejian.site/2020/11/20201129205158.png" alt="" loading="lazy"></figure>
+<p><font size=3>6、耳机放回后，再次弹开耳机仓，会有相关弹窗提示；</p>
+<figure data-type="image" tabindex="11"><img src="https://s3.xuejian.site/2020/11/20201129205640.png" alt="" loading="lazy"></figure>
+<p><font size=3>7、设置中，可以更改名称及各类选项；</p>
+<figure data-type="image" tabindex="12"><img src="https://s3.xuejian.site/2020/11/20201129205753.png" alt="" loading="lazy"></figure>
+<p><font size=3>8、在iPhone或ipad的查找中，可以看到耳机定位。</p>
+<figure data-type="image" tabindex="13"><img src="https://s3.xuejian.site/2020/11/20201130084613.png" alt="" loading="lazy"></figure>
+<hr>
+<p><font size=3>从使用和续航上来看，和正品没有太大的差异；至于音质，这个是因人而异的，目前没有遇到明显的如破音等问题。</p>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[centos7 安装Saltstack]]></title>
+        <id>https://blog.xuejian.site/post/centos7-an-zhuang-saltstack/</id>
+        <link href="https://blog.xuejian.site/post/centos7-an-zhuang-saltstack/">
+        </link>
+        <updated>2020-11-23T07:27:46.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=3>背景：IDC使用的centos7使用minion方式安装，无法直接用yum的方式安装Saltstack。</p>
+<p><font size=3>1、使用以下命令，在系统目录etc/pki/rpm-gpg/中安装公钥（如果显示404，，在本机浏览器访问https://repo.saltstack.com/yum/redhat/7/x86_64/archive 找到最新的时间替换2019.2.7）：</p>
+<pre><code class="language-shell">rpm --import https://repo.saltstack.com/yum/redhat/7/x86_64/archive/2019.2.7/SALTSTACK-GPG-KEY.pub
+</code></pre>
+<p><font size=3>2、进入/etc/yum.repos.d/，vi saltstack.repo，填入以下内容：</p>
+<pre><code class="language-shell">[saltstack-repo]
+name=SaltStack repo for RHEL/CentOS $releasever
+baseurl=https://repo.saltstack.com/yum/redhat/$releasever/$basearch/archive/2019.2.7
+enabled=1
+gpgcheck=1
+gpgkey=https://repo.saltstack.com/yum/redhat/$releasever/$basearch/archive/2019.2.7/SALTSTACK-GPG-KEY.pub
+</code></pre>
+<p><font size=3>3、安装saltstack服务</p>
+<pre><code class="language-shell">yum -y install salt-master    //服务端
+yum -y install salt-minion    //客户端
+</code></pre>
+<p><font size=3>4、启动saltstack服务端（客户端配置后再启动）</p>
+<pre><code class="language-shell">systemctl start salt-master
+</code></pre>
+<p><font size=3>5、使用命令vi /etc/salt/minion打开saltstack客户端配置，更改以下配置（假设服务端IP为1.1.1.1）：</p>
+<pre><code class="language-shell">master: 1.1.1.1
+id: 192.168.1.1 
+</code></pre>
+<p><font size=3>6、启动saltstack客户端服务</p>
+<pre><code class="language-shell">systemctl start salt-minion
+</code></pre>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[frps集群化处理]]></title>
+        <id>https://blog.xuejian.site/post/frps-ji-qun-hua-chu-li/</id>
+        <link href="https://blog.xuejian.site/post/frps-ji-qun-hua-chu-li/">
+        </link>
+        <updated>2020-10-12T13:01:40.000Z</updated>
+        <content type="html"><![CDATA[<p><font size=3>背景：frpc可以做负载均衡，防止单frpc节点宕机影响业务，但frps仍然是单点，为了解决这个问题，本文以阿里云上部署为例，防止frps存在单点情况。</p>
+<p><font size=3>配置：一个公网可访问的阿里云SLB（负载均衡，公网IP为1.1.1.1），2台1核0.5G的ECS（公网IP为2.2.2.2，3.3.3.3），4台线下机房的1核0.5G的虚拟机，业务端口为TCP 30000和35000，业务部署虚拟机两台（IP分别为10.10.10.2和10.10.10.3），云上的安全组和防火墙已经完成开放；</p>
+<p><strong><font size=4>一、线下机房进行frpc配置</strong></p>
+<p><font size=3>1、使用frp的负载均衡和健康检查方法，以以下配置为例：：</p>
+<pre><code class="language-shell">[common]
+# 服务端IP根据ECS的的IP来，分别建立2个并启动
+server_addr = 2.2.2.2
+server_port = 59100
+token = 123456
+
+[yl11]
+type = tcp
+local_ip = 10.10.10.2
+local_port = 35000
+remote_port = 35000
+group = test
+group_key = test
+health_check_type = tcp
+# 建立连接超时时间为 3 秒
+health_check_timeout_s = 3
+# 连续 3 次检查失败，此 proxy 会被摘除
+health_check_max_failed = 3
+# 每隔 10 秒进行一次健康检查
+health_check_interval_s = 10
+
+[yl12]
+type = tcp
+local_ip = 10.10.10.3
+local_port = 35000
+remote_port = 35000
+group = test
+group_key = test
+health_check_type = tcp
+health_check_timeout_s = 3
+health_check_max_failed = 3
+health_check_interval_s = 10
+
+[y13]
+type = tcp
+local_ip = 10.10.10.2
+local_port = 30000
+remote_port = 30000
+group = test1
+group_key = test1
+health_check_type = tcp
+health_check_timeout_s = 3
+health_check_max_failed = 3
+health_check_interval_s = 10
+
+[yl14]
+type = tcp
+local_ip = 10.10.10.3
+local_port = 30000
+remote_port = 30000
+group = test1
+group_key = test1
+health_check_type = tcp
+health_check_timeout_s = 3
+health_check_max_failed = 3
+health_check_interval_s = 10
+</code></pre>
+<p><font size=3>2、以以上配置为基础，分别启动2个frpc连接2台ECS的服务端。</p>
+<p><strong><font size=4>二、阿里云SLB设置</strong></p>
+<p><font size=3>在SLB上，将SLB的TCP 30000和35000分别指向两台ECS的TCP 30000和35000</p>
+<figure data-type="image" tabindex="1"><img src="https://s3.xuejian.site/2020/01/20200104214729.png" alt="" loading="lazy"></figure>
+<p><strong><font size=4>三、对外解析为1.1.1.1</strong></p>
+<p><font size=3>在阿里云解析上将二级域名解析到SLB的公网IP，外界直接调用该地址就可以访问；</p>
+<figure data-type="image" tabindex="2"><img src="https://s3.xuejian.site/2020/05/20201012205346.png" alt="" loading="lazy"></figure>
+]]></content>
+    </entry>
+</feed>
